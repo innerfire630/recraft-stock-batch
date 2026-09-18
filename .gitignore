@@ -1,0 +1,24 @@
+# Never commit captured session credentials
+recraft_session.json
+sniffer_capture.json
+.pw-profile/
+.pw-profiles/
+sessions/
+output/
+images/
+__pycache__/
+*.pyc
+
+# test artifacts / junk
+_mh_test.jpg~
+_p.jpg~
+_mh_test.webp
+output/
+images/
+_probe*
+_check_*
+
+# python
+.venv/
+__pycache__/
+*.pyc
