@@ -1,5 +1,8 @@
 # Recraft → Stock Batch Generator
 
+> 📦 **Setting this up on a new machine? Read [SETUP_GUIDE.md](SETUP_GUIDE.md)** —
+> step-by-step install, account login, first generation and troubleshooting.
+
 Generate images on recraft.ai from the CLI **or a local web app**, replaying
 your own logged-in browser session over plain HTTP — no paid API. Production
 mode converts every image into an **Adobe Stock / Shutterstock compliant**
