@@ -174,9 +174,11 @@ def on_add_account(name, timeout):
     threading.Thread(target=_capture_worker, args=(name, int(timeout)),
                      daemon=True).start()
     return (f"[*] browser opening for '{name}' — just log in to recraft.ai.\n"
-            f"No test image needed: the capture finishes automatically once "
-            f"login is detected (or after {int(timeout)}s). Zero credits "
-            f"spent.")
+            f"Take your time (Google 2FA / email login): you have up to "
+            f"{int(timeout)}s. A green 'Confirm Login' button appears in "
+            f"the browser — click it when you're done, or the capture "
+            f"finishes automatically once the session is valid and the "
+            f"page reaches /project/. Zero credits spent.")
 
 
 def poll_capture2():
@@ -320,12 +322,15 @@ with gr.Blocks(title="Recraft Stock Batch") as demo:
             refresh_b = gr.Button("Refresh Credits")
         refresh_b.click(on_refresh_credits, None, acct_tbl)
         gr.Markdown("---\n### Add new account\n"
-                    "Opens a stealth browser: just log in to recraft.ai. "
-                    "The capture ends automatically when login is detected — "
-                    "no test image, no credits spent.")
+                    "Opens a stealth browser: just log in to recraft.ai "
+                    "(Google 2FA / email login included). A green 'Confirm "
+                    "Login' button appears in the browser — click it when "
+                    "done, or the capture ends automatically once the "
+                    "session is valid and the page reaches /project/. "
+                    "No test image, no credits spent.")
         with gr.Row():
             acc_name = gr.Textbox(label="Account name", placeholder="alt1")
-            acc_timeout = gr.Number(420, label="Capture timeout (s)")
+            acc_timeout = gr.Number(600, label="Capture timeout (s)")
             add_b = gr.Button("Add New Account (browser capture)",
                               variant="primary")
         cap_status = gr.Textbox(label="Capture status", interactive=False)

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sys
 import threading
@@ -75,19 +76,32 @@ WebGLRenderingContext.prototype.getParameter = function (p) {
 };
 """
 
-CHROME_PATHS = [
-    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-    str(Path.home() / r"AppData\Local\Google\Chrome\Application\chrome.exe"),
-    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-]
+def _browser_candidates() -> list[Path]:
+    """Every standard Windows install location for Chrome, then Edge.
+    Uses the actual env vars so it also works on non-C: system drives."""
+    pf = Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
+    pf86 = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"))
+    lad = Path(os.environ.get(
+        "LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
+    return [
+        # Chrome first (preferred)
+        pf / "Google" / "Chrome" / "Application" / "chrome.exe",
+        pf86 / "Google" / "Chrome" / "Application" / "chrome.exe",
+        lad / "Google" / "Chrome" / "Application" / "chrome.exe",
+        # Edge fallback (Chromium-based, works the same for capture)
+        pf / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+        pf86 / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+        lad / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+    ]
 
 
 def find_real_browser() -> str | None:
-    for p in CHROME_PATHS:
-        if Path(p).exists():
-            return p
+    for p in _browser_candidates():
+        try:
+            if p.exists():
+                return str(p)
+        except OSError:
+            continue
     return None
 
 
@@ -408,17 +422,64 @@ def build_known_session(project_id: str | None, storage: dict,
     }
 
 
-def _mint_token(ctx) -> str | None:
-    """GET /api/auth/session inside the browser context -> accessToken
-    (None while the user is not logged in yet)."""
+def _session_state(ctx) -> dict:
+    """GET /api/auth/session inside the browser context -> raw session dict
+    ({} while the user is not logged in yet or the request fails)."""
     try:
         r = ctx.request.get("https://www.recraft.ai/api/auth/session",
                             timeout=10000)
         if r.ok:
-            return (r.json() or {}).get("accessToken")
+            return r.json() or {}
     except Exception:
         pass
+    return {}
+
+
+def _is_logged_in(session: dict) -> bool:
+    """Only treat the session as logged-in when BOTH a real user object and
+    a non-empty accessToken are present. Anonymous visitors can get a
+    session response too (empty {} / no user) — that must NOT count as a
+    login, otherwise the browser closes prematurely mid-login."""
+    token = session.get("accessToken")
+    user = session.get("user")
+    return (isinstance(token, str) and len(token) > 20
+            and isinstance(user, dict) and bool(user))
+
+
+def _mint_token(ctx) -> str | None:
+    """Validated accessToken from /api/auth/session, or None while the
+    user is not (fully) logged in yet."""
+    session = _session_state(ctx)
+    if _is_logged_in(session):
+        return session.get("accessToken")
     return None
+
+
+# Floating 'Confirm Login' button injected into the capture browser. Gives
+# the user a manual safeguard: click it when the login is done and the
+# capture verifies the session before closing (never closes blindly).
+CONFIRM_LOGIN_JS = """
+() => {
+  if (document.getElementById('__recraft_confirm_btn')) return;
+  const bar = document.createElement('div');
+  bar.id = '__recraft_confirm_bar';
+  bar.style.cssText = 'position:fixed;bottom:18px;right:18px;z-index:2147483647;'
+    + 'display:flex;align-items:center;gap:10px;padding:10px 14px;'
+    + 'background:#1f2937;color:#fff;border-radius:10px;'
+    + 'font:14px system-ui,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,.4);';
+  const span = document.createElement('span');
+  span.textContent = 'Finished logging in?';
+  const btn = document.createElement('button');
+  btn.id = '__recraft_confirm_btn';
+  btn.textContent = '\u2705 Confirm Login';
+  btn.style.cssText = 'padding:6px 14px;border:0;border-radius:6px;'
+    + 'background:#22c55e;color:#fff;font-weight:600;cursor:pointer;';
+  btn.onclick = () => { window.__recraftConfirmLogin = true; };
+  bar.appendChild(span);
+  bar.appendChild(btn);
+  document.body.appendChild(bar);
+}
+"""
 
 
 def _sniff_project_id(records) -> str | None:
@@ -438,8 +499,11 @@ def capture_session(profile_dir: Path, log=print, timeout=None,
     Zero credits spent, and the new Chat UI can't cause a timeout.
 
     timeout=None  -> CLI mode: user presses ENTER after logging in.
-    timeout=secs  -> auto mode (web UI): finishes as soon as login is
-                     detected, or times out.
+    timeout=secs  -> auto mode (web UI): finishes when the session is
+                     valid AND (the URL moved to /project/  OR  the user
+                     clicked the in-page 'Confirm Login' button  OR  the
+                     session stayed valid for 15s). Never closes on an
+                     anonymous/empty session.
     Returns the session dict (caller saves it).
     """
     try:
@@ -450,7 +514,11 @@ def capture_session(profile_dir: Path, log=print, timeout=None,
 
     cap = Capture()
     browser_exe = find_real_browser()
-    log(f"[*] launching {'real browser: ' + browser_exe if browser_exe else 'Playwright Chromium (no Chrome found)'}")
+    if browser_exe:
+        log(f"[*] launching real browser: {browser_exe}")
+    else:
+        log("[*] no Chrome/Edge found in standard locations — "
+            "falling back to Playwright Chromium")
 
     with sync_playwright() as pw:
         ctx = pw.chromium.launch_persistent_context(
@@ -482,18 +550,71 @@ def capture_session(profile_dir: Path, log=print, timeout=None,
                 page.wait_for_timeout(300)
         else:
             deadline = time.time() + timeout
-            log(f"[*] waiting up to {timeout}s for login "
-                f"(no test image needed) ...")
-            while time.time() < deadline and not _mint_token(ctx):
+            log(f"[*] waiting up to {timeout}s for login (no test image "
+                f"needed). Take your time with Google 2FA / email login — "
+                f"a green 'Confirm Login' button is shown in the browser; "
+                f"click it when done, or the capture auto-finishes once "
+                f"the session is valid.")
+            stable_since = None
+            last_inject = 0.0
+            while time.time() < deadline:
+                now = time.time()
+                # Re-inject the Confirm button periodically — it disappears
+                # whenever the user navigates (login pages, redirects).
+                if now - last_inject >= 3.0:
+                    try:
+                        page.evaluate(CONFIRM_LOGIN_JS)
+                    except Exception:
+                        pass
+                    last_inject = now
+
+                clicked = False
+                try:
+                    clicked = bool(page.evaluate(
+                        "window.__recraftConfirmLogin === true"))
+                except Exception:
+                    pass
+                if clicked:
+                    log("[*] 'Confirm Login' clicked — verifying session...")
+                    page.wait_for_timeout(2000)  # let the session settle
+                    if _mint_token(ctx):
+                        break
+                    log("(session not valid yet — keep logging in, the "
+                        "browser stays open)")
+                    try:
+                        page.evaluate("window.__recraftConfirmLogin = false")
+                    except Exception:
+                        pass
+                    stable_since = None
+                    continue
+
+                if _mint_token(ctx):
+                    url = page.url or ""
+                    if "/project/" in url:
+                        log(f"[*] valid session and URL on /project/ — done")
+                        break
+                    if stable_since is None:
+                        stable_since = now
+                        log("[*] valid session detected — waiting for a "
+                            "/project/ navigation or a 'Confirm Login' "
+                            "click (auto-finishes after the session stays "
+                            "valid for 15s)...")
+                    elif now - stable_since >= 15.0:
+                        log("[*] session stayed valid for 15s — finishing "
+                            "(page never navigated to /project/)")
+                        break
+                else:
+                    stable_since = None
                 page.wait_for_timeout(1000)
 
         token = _mint_token(ctx)
         if not token:
             ctx.close()
             raise RuntimeError(
-                "Login not detected (no accessToken from "
-                "/api/auth/session) — log in and try again.")
-        log("[*] login detected")
+                "Login not detected (no valid user + accessToken from "
+                "/api/auth/session) — the browser stayed open for the full "
+                "timeout. Log in fully (including 2FA) and try again.")
+        log("[*] login detected (valid user + accessToken)")
 
         # Fresh project -> deterministic project_id and a clean generation
         # queue (Free plan queues wedge easily; see ProjectJammed).
