@@ -23,10 +23,12 @@ import threading
 import time
 from pathlib import Path
 
-from recraft_core import (NoCredits, RecraftClient, RecraftError,
+from recraft_core import (BASE_DIR, NoCredits, RecraftClient, RecraftError,
                           capture_session)
 
-SESSIONS_DIR = Path("sessions")
+# Anchored to the project root so the pool works from any working directory
+# (systemd units often start with a different CWD).
+SESSIONS_DIR = BASE_DIR / "sessions"
 STATE_FILE = SESSIONS_DIR / "_pool_state.json"
 
 

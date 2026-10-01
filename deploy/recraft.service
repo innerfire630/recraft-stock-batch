@@ -1,0 +1,74 @@
+# ---------------------------------------------------------------------------
+# systemd unit for the Recraft Stock Generator (aaPanel / any Debian server)
+#
+# Install:
+#   sudo cp deploy/recraft.service /etc/systemd/system/recraft.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now recraft
+#   sudo systemctl status recraft
+#   journalctl -u recraft -f        # live logs
+#
+# NOTE: this service intentionally binds to 127.0.0.1 only. It must sit
+# behind the nginx reverse proxy from deploy/nginx-recraft.conf, which is
+# where TLS and the real client-facing port live.
+# ---------------------------------------------------------------------------
+
+[Unit]
+Description=Recraft Stock Batch Generator (Gradio UI)
+Documentation=file:%h/DEPLOY.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# Adjust these two lines to your checkout location.
+User=www
+Group=www
+WorkingDirectory=/www/wwwroot/recraft
+
+# Load config (password, port, root_path) from the project .env file.
+# server.py reads it itself too, but exporting it here means systemd shows it.
+EnvironmentFile=-/www/wwwroot/recraft/.env
+
+# Bind to loopback — nginx proxies to this. Do NOT put 0.0.0.0 here.
+Environment=RECRAFT_HOST=127.0.0.1
+Environment=RECRAFT_PORT=7860
+Environment=RECRAFT_AUTH=1
+
+# --workers 1 is REQUIRED: the batch runner, account pool and capture status
+# live in process memory, so a second worker would serve a stale UI.
+ExecStart=/www/wwwroot/recraft/.venv/bin/uvicorn server:app \
+    --host 127.0.0.1 --port 7860 --workers 1 --proxy-headers \
+    --forwarded-allow-ips 127.0.0.1
+
+ExecReload=/bin/kill -HUP $MAINPID
+
+Restart=always
+RestartSec=5
+# A batch can hold a request open for minutes while images generate.
+TimeoutStopSec=45
+
+# ---- Hardening -----------------------------------------------------------
+# The app needs to write output/, sessions/ and .pw-profiles/ inside its own
+# directory, and read /dev/shm. Everything else is denied.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/www/wwwroot/recraft
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryMax=2G
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=recraft
+
+[Install]
+WantedBy=multi-user.target

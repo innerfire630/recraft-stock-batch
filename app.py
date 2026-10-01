@@ -19,6 +19,7 @@ uploading is fine, the generation method is your responsibility.
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 import traceback
@@ -30,7 +31,7 @@ from account_manager import AccountPool
 from batch_processor import BatchRunner, read_batch_csv
 from metadata_helper import (cutout_to_dual_export, read_back_metadata,
                              webp_to_stock_jpeg)
-from recraft_core import RecraftError, capture_session
+from recraft_core import PROFILE_DIR, RecraftError, capture_session
 
 POOL = AccountPool(min_delay=5.0, max_delay=10.0)
 RUNNER = BatchRunner(POOL)
@@ -147,7 +148,7 @@ def on_refresh_credits():
 
 def _capture_worker(name: str, timeout: int):
     CAPTURE.update(running=True, log="", account=None, error=None)
-    profile = Path(".pw-profiles") / name
+    profile = PROFILE_DIR / name
     profile.mkdir(parents=True, exist_ok=True)
     try:
         def log(msg):
@@ -379,5 +380,9 @@ with gr.Blocks(title="Recraft Stock Batch") as demo:
                 "automates private endpoints (ToS risk is yours).*")
 
 if __name__ == "__main__":
-    demo.launch(server_name="127.0.0.1", server_port=7860,
+    # Local/desktop use. For a real server run `server.py` (or the systemd
+    # unit in deploy/) instead — it binds 0.0.0.0 behind a reverse proxy and
+    # adds login protection.
+    demo.launch(server_name=os.environ.get("RECRAFT_HOST", "127.0.0.1"),
+                server_port=int(os.environ.get("RECRAFT_PORT", "7860")),
                 inbrowser=True, theme=gr.themes.Soft())

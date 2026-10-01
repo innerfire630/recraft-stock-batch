@@ -9,6 +9,10 @@ images/
 __pycache__/
 *.pyc
 
+# Server config — contains RECRAFT_PASSWORD
+.env
+deploy/*.local
+
 # test artifacts / junk
 _mh_test.jpg~
 _p.jpg~

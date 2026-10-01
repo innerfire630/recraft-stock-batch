@@ -41,8 +41,14 @@ except ImportError:
 # ---------------------------------------------------------------------------
 MARKER = "ZQXV-CAPTURE-2026-PASTE-ME"
 START_URL = "https://www.recraft.ai/generate"
-SESSIONS_DIR = Path("sessions")
-DEFAULT_SESSION_FILE = Path("recraft_session.json")
+
+# All state is anchored to the project root (the folder holding this file)
+# so the app behaves the same whether it is started from the repo root, from
+# a systemd unit with a different WorkingDirectory, or behind a reverse proxy.
+BASE_DIR = Path(__file__).resolve().parent
+SESSIONS_DIR = BASE_DIR / "sessions"
+DEFAULT_SESSION_FILE = BASE_DIR / "recraft_session.json"
+PROFILE_DIR = BASE_DIR / ".pw-profiles"
 
 UUID_RE = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
@@ -77,13 +83,14 @@ WebGLRenderingContext.prototype.getParameter = function (p) {
 """
 
 def _browser_candidates() -> list[Path]:
-    """Every standard Windows install location for Chrome, then Edge.
-    Uses the actual env vars so it also works on non-C: system drives."""
+    """Every standard install location for Chrome, then Edge (Chromium-based,
+    works the same for capture). Uses the actual env vars so it also works on
+    non-C: system drives, and covers macOS + Linux for server installs."""
     pf = Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
     pf86 = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"))
     lad = Path(os.environ.get(
         "LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
-    return [
+    candidates = [
         # Chrome first (preferred)
         pf / "Google" / "Chrome" / "Application" / "chrome.exe",
         pf86 / "Google" / "Chrome" / "Application" / "chrome.exe",
@@ -92,17 +99,39 @@ def _browser_candidates() -> list[Path]:
         pf / "Microsoft" / "Edge" / "Application" / "msedge.exe",
         pf86 / "Microsoft" / "Edge" / "Application" / "msedge.exe",
         lad / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+        # macOS
+        Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+        Path("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+        Path(str(Path.home() /
+                 "Applications/Google Chrome.app/Contents/MacOS/Google Chrome")),
+        # Linux (Debian/Ubuntu incl. aaPanel, RHEL, Arch)
+        Path("/usr/bin/google-chrome"),
+        Path("/usr/bin/google-chrome-stable"),
+        Path("/usr/bin/chromium"),
+        Path("/usr/bin/chromium-browser"),
+        Path("/opt/google/chrome/chrome"),
+        Path("/usr/bin/microsoft-edge"),
+        Path("/usr/bin/microsoft-edge-stable"),
     ]
+    return [c for c in candidates if _is_executable(c)]
+
+
+def _is_executable(p: Path) -> bool:
+    """True when the file exists AND is runnable. On Windows a .exe that
+    exists is enough; on POSIX we also require the executable bit so we never
+    try to exec a non-executable stub."""
+    try:
+        if not p.is_file():
+            return False
+        if os.name == "nt":
+            return True
+        return os.access(p, os.X_OK)
+    except OSError:
+        return False
 
 
 def find_real_browser() -> str | None:
-    for p in _browser_candidates():
-        try:
-            if p.exists():
-                return str(p)
-        except OSError:
-            continue
-    return None
+    return str(_browser_candidates()[0]) if _browser_candidates() else None
 
 
 # ---------------------------------------------------------------------------
@@ -519,6 +548,12 @@ def capture_session(profile_dir: Path, log=print, timeout=None,
     else:
         log("[*] no Chrome/Edge found in standard locations — "
             "falling back to Playwright Chromium")
+    if os.name != "nt" and not os.environ.get("DISPLAY") \
+            and not os.environ.get("WAYLAND_DISPLAY"):
+        log("[!] No graphical display detected. Interactive login capture "
+            "needs one — run the capture on your own machine and copy the "
+            "session file to the server (see DEPLOY.md, 'Adding accounts "
+            "on a headless server').")
 
     with sync_playwright() as pw:
         ctx = pw.chromium.launch_persistent_context(

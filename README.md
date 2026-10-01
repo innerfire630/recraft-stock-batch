@@ -34,6 +34,10 @@ pip install -r requirements.txt
 playwright install chromium        # only needed for session capture
 ```
 
+> **Hosting it on your own server (aaPanel, VPS)?** See
+> **[DEPLOY.md](DEPLOY.md)** — nginx reverse proxy, systemd service, and the
+> one thing that does *not* work on a headless box (browser login capture).
+
 Then capture YOUR OWN recraft.ai account (no test image, no credits spent):
 
 ```bash
@@ -64,6 +68,14 @@ python generate.py --check                       # session live? credits?
 
 ```bash
 python app.py        # opens http://127.0.0.1:7860
+```
+
+On a server, run the production entry point instead (it binds loopback,
+requires a password, and sits behind nginx):
+
+```bash
+cp .env.example .env     # set RECRAFT_PASSWORD
+uvicorn server:app --host 127.0.0.1 --port 7860 --workers 1
 ```
 
 * **Tab 1 — Batch Generator**: upload a stock CSV, tick *Crisp 4K Upscale*

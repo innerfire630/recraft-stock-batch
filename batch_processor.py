@@ -40,10 +40,10 @@ from pathlib import Path
 from account_manager import AccountPool
 from metadata_helper import (clean_keywords, clean_text, cutout_to_dual_export,
                              slugify, webp_to_stock_jpeg)
-from recraft_core import RecraftError
+from recraft_core import BASE_DIR, RecraftError
 
-OUTPUT_DIR = Path("output")
-TEMP_DIR = Path("output/_webp")
+OUTPUT_DIR = BASE_DIR / "output"
+TEMP_DIR = OUTPUT_DIR / "_webp"
 
 REQUIRED = ("prompt", "tags")
 _ALIASES = {
