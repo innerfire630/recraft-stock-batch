@@ -550,10 +550,14 @@ def capture_session(profile_dir: Path, log=print, timeout=None,
             "falling back to Playwright Chromium")
     if os.name != "nt" and not os.environ.get("DISPLAY") \
             and not os.environ.get("WAYLAND_DISPLAY"):
-        log("[!] No graphical display detected. Interactive login capture "
-            "needs one — run the capture on your own machine and copy the "
-            "session file to the server (see DEPLOY.md, 'Adding accounts "
-            "on a headless server').")
+        log("[!] Headless server detected (no DISPLAY/WAYLAND_DISPLAY).")
+        log("[!] Interactive login capture needs a real screen, so the "
+            "'Add New Account' button cannot log in here.")
+        log("[!] Everything ELSE works fine headless — generation uses plain "
+            "httpx, not a browser, so this server needs no Chrome at all.")
+        log("[!] To add an account: capture it on your own machine "
+            "(python setup_session.py), then upload sessions/<name>.json "
+            "here and press Refresh Credits. See DEPLOY.md section 7.")
 
     with sync_playwright() as pw:
         ctx = pw.chromium.launch_persistent_context(

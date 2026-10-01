@@ -168,29 +168,109 @@ sudo journalctl -u recraft -f            # live logs
 * Log in → all three tabs render.
 * Accounts table shows your session(s).
 
+### What has actually been tested (and what has not)
+
+Be precise about this, because "it should work" is not the same as "it works".
+
+**Verified by running it:**
+
+| Check | Result |
+|---|---|
+| `server.py` builds and serves | `/` → 200 login wall, `/config` → 401 unauth |
+| Real login with the right password | 200, `/config` then 200 |
+| Wrong password | 400, and no session granted |
+| `/healthz` | 200 `{"status":"ok","accounts":[...]}` |
+| Sub-path mounting (`RECRAFT_ROOT_PATH=/recraft`) | `/recraft/` → 200 |
+| `.env` loading (port, password, root_path) | all applied |
+| `/docs`, `/redoc`, `/openapi.json` | 404 (removed) |
+| uvicorn flags in the systemd unit | `--proxy-headers`, `--forwarded-allow-ips`, `--workers` all exist |
+| **Live generation through the changed code** | 4K transparent PNG, alpha range `(0,255)`, 4096×4096 |
+| **Metadata pipeline** | IPTC 2:05/2:120/2:25, EXIF + XPKeywords, XMP packet, embedded sRGB ICC (588 bytes) |
+| Local desktop path unchanged | 2 accounts load, Chrome detected, `python app.py` unaffected |
+| Repo hygiene | no credentials in the commit or in git history |
+
+**Not yet verified — check these yourself after deploying:**
+
+| Item | How to confirm |
+|---|---|
+| `systemd` unit starts and stays up | `systemctl status recraft` |
+| nginx config is accepted | `nginx -t` (aaPanel validates on save) |
+| TLS certificate | padlock in the browser |
+| **SSE progress bar animating** | run a batch and watch the log/progress update live |
+| 20-row batch completing | upload a real `sample_batch.csv` and time it |
+| Cloudflare not challenging the server | no Turnstile interstitial during a run |
+
+The SSE line is the one to watch. `proxy_buffering off` is what makes the
+progress stream work; if you see a frozen progress bar while the batch
+actually finishes, that is the cause.
+
 ---
 
 ## 7. Adding accounts on a headless server ⚠️
 
-The "Add New Account" button opens a **real browser window** for you to log
-in. A server has no display, so that button cannot work there. Two supported
-routes:
+**Short answer: uploading `sessions/<name>.json` from your PC is the right
+way. It is the only supported way to add a *new* account, because logging in
+requires typing credentials (and possibly 2FA) into a real browser window.**
 
-**A) Capture on your own machine, upload the file (simplest).**
-1. On your PC, in this repo run `python setup_session.py` (or add the account
-   in the web UI) → creates `sessions/<name>.json`.
-2. Upload that file to `/www/wwwroot/recraft/sessions/` (SFTP or
-   `scp`). Permissions matter:
+But be clear about what is and is **not** affected — this trips people up:
+
+| Feature | Works headless on the server? |
+|---|---|
+| Batch generation (create → upscale → bg-removal → JPEG/PNG) | ✅ **Yes** — plain `httpx`, no browser involved |
+| Background removal, crisp upscale, metadata (IPTC/EXIF/XMP/ICC) | ✅ **Yes** — all local/Pillow work |
+| Refresh Credits, Delete Account, queue/progress UI | ✅ **Yes** |
+| Batch CSV upload, downloads, stop/resume | ✅ **Yes** |
+| Playwright / Chrome installed on the server | ❌ **Not needed** — only used for capture |
+| **Capturing a brand-new account** (interactive login) | ❌ **No** — needs a screen |
+
+So your server does **not** need a **browser** installed. Note the
+distinction, because it trips people up:
+
+* `requirements.txt` *does* install the `playwright` **Python package**
+  (~a few MB, and it is imported lazily — only inside `capture_session()`).
+  That is harmless and normal.
+* What is **not** installed is the ~150 MB **browser binary**
+  (`playwright install chromium`) and system Chrome. `install.sh` skips both,
+  and nothing in the generation path ever needs them.
+
+So a clean `install.sh` on a headless server is expected and correct — you
+are not missing a dependency.
+
+### The capture-and-upload procedure
+
+1. **On your PC**, in this repo:
    ```bash
-   sudo chown www:www sessions/<name>.json && sudo chmod 600 sessions/<name>.json
+   python setup_session.py              # -> sessions/<name>.json
    ```
-3. Restart (or just click **Refresh Credits**): `sudo systemctl restart recraft`.
-4. **Delete the file from your PC** when done — it is a live credential.
+   (Or use the web UI's *Add New Account* locally — same result.)
+2. **Upload** that file to `/www/wwwroot/recraft/sessions/`.
+3. **Fix ownership and permissions** — the service runs as `www`, and this
+   file is a live credential:
+   ```bash
+   sudo chown www:www sessions/<name>.json
+   sudo chmod 600 sessions/<name>.json
+   ```
+4. **Activate it:** click **Refresh Credits** in the Account Manager tab
+   (no restart needed), or `sudo systemctl restart recraft`.
+5. **Delete the file from your PC** when done — it *is* a login credential.
 
-**B) Real Chrome on the server + VNC/x11vnc.** Heavier: install Chrome, then
-a VNC server, capture through the UI. Only worth it for many accounts. The app
-already prefers a system Chrome over bundled Chromium, and warns clearly if
-no display is available.
+To move several at once, `scp` the whole folder:
+```bash
+scp sessions/*.json user@your-server:/tmp/
+# then, ON THE SERVER:
+sudo cp /tmp/*.json /www/wwwroot/recraft/sessions/
+sudo chown www:www /www/wwwroot/recraft/sessions/*.json
+sudo chmod 600 /www/wwwroot/recraft/sessions/*.json
+shred -u /tmp/*.json
+```
+
+### Alternative: a display on the server
+
+If you really want capture on the server, give it a screen: install Google
+Chrome plus `x11vnc`, or run a desktop container. The app prefers a
+system-installed Chrome over Playwright's bundled Chromium (Cloudflare is
+stricter with the latter) and warns clearly in the log when no display is
+found. Only worth it if you manage many accounts.
 
 ---
 

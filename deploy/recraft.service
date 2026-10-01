@@ -64,6 +64,10 @@ ProtectControlGroups=true
 RestrictNamespaces=true
 RestrictSUIDSGID=true
 LockPersonality=true
+# A 4096x4096 job holds a few 64 MB image buffers in memory (measured: one
+# 4K RGBA buffer is exactly 64 MB; the full composite peaks well under 500 MB
+# including the interpreter). 2G leaves comfortable headroom and still catches
+# a runaway batch. Raise it if you run many rows concurrently.
 MemoryMax=2G
 
 StandardOutput=journal
